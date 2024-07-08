@@ -443,6 +443,6 @@ func init() {
 	generateRootCmd.AddCommand(generateRootStatusCmd)
 	generateRootCmd.AddCommand(generateRootCancelCmd)
 
-	generateRootCmd.Flags().StringVarP(&pgpkeypath, "pgpkey", "p", "", "path to the pgp key to encrypt the token with")
+	generateRootInitCmd.Flags().StringVarP(&pgpkeypath, "pgpkey", "p", "", "path to the pgp key to encrypt the token with")
 
 }
