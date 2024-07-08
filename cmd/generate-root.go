@@ -29,35 +29,34 @@ import (
 	//"github.com/acidlemon/go-dumper"
 	"sync"
 
-	"github.com/hashicorp/vault/api"
 	"github.com/jaxxstorm/hookpick/config"
 	"github.com/jaxxstorm/hookpick/gpg"
 )
 
-var shares int
-var threshold int
+var pgpkeypath string
+var otp string
 
-// rekeyCmd represents the rekey command
-var rekeyCmd = &cobra.Command{
-	Use:   "rekey",
-	Short: "Runs rekey operations against Vault servers",
-	Long: `Runs rekey operations against all Vault servers
+// generateRootCmd represents the generate-root command
+var generateRootCmd = &cobra.Command{
+	Use:   "generate-root",
+	Short: "Runs generate-root operations against Vault servers",
+	Long: `Runs generate-root operations against all Vault servers
 or specified Vault servers in the configuration file`,
 }
 
-var initCmd = &cobra.Command{
+var generateRootInitCmd = &cobra.Command{
 	Use:   "init",
-	Short: "Starts the rekey operation on specified Vault server",
-	Long: `Initialises a rekey against specified Vault servers
-and returns the client nonce needed for other rekey operators`,
+	Short: "Starts the generate-root operation on specified Vault server",
+	Long: `Initialises a generate-root against specified Vault servers
+and returns the client nonce needed for other generate-root operators`,
 	Run: func(cmd *cobra.Command, args []string) {
 
-		if threshold == 0 {
-			log.Fatal("Please specify the secret threshold: See --help")
+		if pgpkeypath == "" {
+			log.Info("No PGP key provided")
 		}
 
-		if shares == 0 {
-			log.Fatal("Please specify the secret shares: See --help")
+		if otp == "" {
+			log.Info("No OTP key provided")
 		}
 
 		allDCs := GetDatacenters()
@@ -67,17 +66,17 @@ and returns the client nonce needed for other rekey operators`,
 		// loop through datacenters
 		for _, dc := range allDCs {
 			wg.Add(1)
-			go ProcessRekey(&wg, dc, configHelper, v.NewVaultHelper, HostRekeyInit)
+			go ProcessGenerateRoot(&wg, dc, configHelper, v.NewVaultHelper, HostGenerateRootInit)
 		}
 		wg.Wait()
 	},
 }
 
-var submitCmd = &cobra.Command{
+var generateRootSubmitCmd = &cobra.Command{
 	Use:   "submit",
-	Short: "Submits your key to the rekey command",
-	Long: `Submits your unseal key to the rekey process
-and progresses the rekey`,
+	Short: "Submits your key to the generate-root command",
+	Long: `Submits your unseal key to the generate-root process
+and progresses the generate-root`,
 	Run: func(cmd *cobra.Command, args []string) {
 		allDCs := GetDatacenters()
 		configHelper := NewConfigHelper(GetSpecificDatacenter, GetCaPath, GetProtocol, GetGpgKey)
@@ -87,16 +86,16 @@ and progresses the rekey`,
 
 		for _, dc := range allDCs {
 			wg.Add(1)
-			go ProcessRekeySubmit(&wg, dc, configHelper, v.NewVaultHelper, gpgHelper, GetVaultKeys, HostRekeySubmit)
+			go ProcessGenerateRootSubmit(&wg, dc, configHelper, v.NewVaultHelper, gpgHelper, GetVaultKeys, HostGenerateRootSubmit)
 		}
 		wg.Wait()
 	},
 }
 
-var rekeyStatusCmd = &cobra.Command{
+var generateRootStatusCmd = &cobra.Command{
 	Use:   "status",
-	Short: "Retrieves the current status of a rekey",
-	Long: `Retrieves the current status of a rekey process
+	Short: "Retrieves the current status of a generate-root",
+	Long: `Retrieves the current status of a generate-root process
 from all the specified Vault servers`,
 	Run: func(cmd *cobra.Command, args []string) {
 
@@ -109,18 +108,41 @@ from all the specified Vault servers`,
 			wg.Add(1)
 			log.WithFields(log.Fields{
 				"datacenter": dc.Name,
-			}).Debugln("Starting to process rekey")
-			go ProcessRekey(&wg, dc, configHelper, v.NewVaultHelper, HostRekeyStatus)
+			}).Debugln("Starting to process generate-root")
+			go ProcessGenerateRoot(&wg, dc, configHelper, v.NewVaultHelper, HostGenerateRootStatus)
 		}
 		wg.Wait()
 	},
 }
 
-func ProcessRekey(wg *sync.WaitGroup,
+var generateRootCancelCmd = &cobra.Command{
+	Use:   "cancel",
+	Short: "Cancels the current generate-root",
+	Long: `Cancels the current generate-root process
+from all the specified Vault servers`,
+	Run: func(cmd *cobra.Command, args []string) {
+
+		allDCs := GetDatacenters()
+		configHelper := NewConfigHelper(GetSpecificDatacenter, GetCaPath, GetProtocol, GetGpgKey)
+
+		wg := sync.WaitGroup{}
+
+		for _, dc := range allDCs {
+			wg.Add(1)
+			log.WithFields(log.Fields{
+				"datacenter": dc.Name,
+			}).Debugln("Starting to process generate-root")
+			go ProcessGenerateRoot(&wg, dc, configHelper, v.NewVaultHelper, HostGenerateRootCancel)
+		}
+		wg.Wait()
+	},
+}
+
+func ProcessGenerateRoot(wg *sync.WaitGroup,
 	dc config.Datacenter,
 	configHelper *ConfigHelper,
 	vhGetter v.VaultHelperGetter,
-	hostRekeyInit HostImpl) {
+	hostGenerateRootInit HostImpl) {
 	defer wg.Done()
 
 	specificDC := configHelper.GetDC()
@@ -130,7 +152,7 @@ func ProcessRekey(wg *sync.WaitGroup,
 	log.WithFields(log.Fields{
 		"datacenter": dc.Name,
 		"dc":         specificDC,
-	}).Debugln("Processing rekey for")
+	}).Debugln("Processing generate-root for")
 
 	if specificDC == dc.Name || specificDC == "" {
 
@@ -139,21 +161,21 @@ func ProcessRekey(wg *sync.WaitGroup,
 			hwg.Add(1)
 			log.WithFields(log.Fields{
 				"host": host.Name,
-			}).Debugln("Starting to process rekey")
+			}).Debugln("Starting to process generate-root")
 			vaultHelper := vhGetter(host.Name, caPath, protocol, host.Port, v.Status)
-			go HostGenerateRootInit(&hwg, vaultHelper)
+			go hostGenerateRootInit(&hwg, vaultHelper)
 		}
 		hwg.Wait()
 	}
 }
 
-func ProcessRekeySubmit(wg *sync.WaitGroup,
+func ProcessGenerateRootSubmit(wg *sync.WaitGroup,
 	dc config.Datacenter,
 	configHelper *ConfigHelper,
 	vhGetter v.VaultHelperGetter,
 	gpgHelper *gpg.GPGHelper,
 	vaultKeysGetter VaultKeyGetter,
-	submitHostRekey HostSubmitImpl) {
+	submitHostGenerateRoot HostSubmitImpl) {
 	defer wg.Done()
 
 	specificDC := configHelper.GetDC()
@@ -163,7 +185,7 @@ func ProcessRekeySubmit(wg *sync.WaitGroup,
 	log.WithFields(log.Fields{
 		"datacenter": dc.Name,
 		"dc":         specificDC,
-	}).Debugln("Processing rekey for")
+	}).Debugln("Processing generate-root for")
 
 	if specificDC == dc.Name || specificDC == "" {
 
@@ -174,16 +196,16 @@ func ProcessRekeySubmit(wg *sync.WaitGroup,
 			hwg.Add(1)
 			log.WithFields(log.Fields{
 				"host": host.Name,
-			}).Debugln("Starting to process rekey")
+			}).Debugln("Starting to process generate-root")
 
 			vaultHelper := vhGetter(host.Name, caPath, protocol, host.Port, v.Status)
-			go submitHostRekey(&hwg, vaultHelper, vaultKeys)
+			go submitHostGenerateRoot(&hwg, vaultHelper, vaultKeys)
 		}
 		hwg.Wait()
 	}
 }
 
-func HostRekeyInit(wg *sync.WaitGroup, vaultHelper *v.VaultHelper) {
+func HostGenerateRootInit(wg *sync.WaitGroup, vaultHelper *v.VaultHelper) {
 	defer wg.Done()
 	client, err := vaultHelper.GetVaultClient()
 
@@ -196,7 +218,7 @@ func HostRekeyInit(wg *sync.WaitGroup, vaultHelper *v.VaultHelper) {
 
 	log.WithFields(log.Fields{
 		"host": vaultHelper.HostName,
-	}).Debugln("Starting rekey init")
+	}).Debugln("Starting generate-root init")
 
 	// check init status
 	sealed, init := vaultHelper.GetStatus(client)
@@ -204,25 +226,24 @@ func HostRekeyInit(wg *sync.WaitGroup, vaultHelper *v.VaultHelper) {
 	if init == true && sealed == false {
 		// get the current leader to operate on
 		result, _ := client.Sys().Leader()
-		// if we are the leader start the rekey
+		// if we are the leader start the generate-root
 		if result.IsSelf == true {
-			rekeyResult, err := client.Sys().RekeyInit(&api.RekeyInitRequest{SecretShares: shares, SecretThreshold: threshold})
+			generateRootResult, err := client.Sys().GenerateRootInit("", pgpkeypath)
 			if err != nil {
-				log.Errorln("Rekey init error ", err)
+				log.Errorln("generate-root init error ", err)
 			}
-			if rekeyResult.Started {
+			if generateRootResult.Started {
 				log.WithFields(log.Fields{
-					"host":      vaultHelper.HostName,
-					"shares":    rekeyResult.N,
-					"threshold": rekeyResult.T,
-					"nonce":     rekeyResult.Nonce,
-				}).Infoln("Rekey Started. Please supply your keys.")
+					"host":       vaultHelper.HostName,
+					"pgpkeypath": generateRootResult.PGPFingerprint,
+					"nonce":      generateRootResult.Nonce,
+				}).Infoln("Generate Root Started. Please supply your keys.")
 			}
 		}
 	}
 }
 
-func HostRekeyStatus(wg *sync.WaitGroup, vaultHelper *v.VaultHelper) {
+func HostGenerateRootStatus(wg *sync.WaitGroup, vaultHelper *v.VaultHelper) {
 	defer wg.Done()
 	client, err := vaultHelper.GetVaultClient()
 
@@ -232,43 +253,74 @@ func HostRekeyStatus(wg *sync.WaitGroup, vaultHelper *v.VaultHelper) {
 
 	log.WithFields(log.Fields{
 		"host": vaultHelper.HostName,
-	}).Debugln("Starting rekey status")
+	}).Debugln("Starting generate-root status")
 
 	// check init status
 	sealed, init := vaultHelper.GetStatus(client)
 
 	if init == true && sealed == false {
 		result, _ := client.Sys().Leader()
-		// if we are the leader start the rekey
+		// if we are the leader start the generate-root
 		if result.IsSelf == true {
-			rekeyStatus, err := client.Sys().RekeyStatus()
+			generateRootStatus, err := client.Sys().GenerateRootStatus()
 
 			if err != nil {
 				log.WithFields(log.Fields{
 					"host":  vaultHelper.HostName,
 					"port":  vaultHelper.Port,
 					"error": err,
-				}).Errorln("Error getting rekey status")
+				}).Errorln("Error getting generate-root status")
 			}
-			if rekeyStatus.Started {
+			if generateRootStatus.Started {
 				log.WithFields(log.Fields{
-					"host":      vaultHelper.HostName,
-					"shares":    rekeyStatus.N,
-					"threshold": rekeyStatus.T,
-					"nonce":     rekeyStatus.Nonce,
-					"progress":  rekeyStatus.Progress,
-					"required":  rekeyStatus.Required,
-				}).Infoln("Rekey has been started")
+					"host":     vaultHelper.HostName,
+					"nonce":    generateRootStatus.Nonce,
+					"progress": generateRootStatus.Progress,
+					"required": generateRootStatus.Required,
+				}).Infoln("Generate root has been started")
 			} else {
 				log.WithFields(log.Fields{
 					"host": vaultHelper.HostName,
-				}).Infoln("Rekey not started")
+				}).Infoln("Generate root not started")
 			}
 		}
 	}
 }
 
-func HostRekeySubmit(wg *sync.WaitGroup, vaultHelper *v.VaultHelper, vaultKeys []string) bool {
+func HostGenerateRootCancel(wg *sync.WaitGroup, vaultHelper *v.VaultHelper) {
+	defer wg.Done()
+	client, err := vaultHelper.GetVaultClient()
+
+	if err != nil {
+		log.WithFields(log.Fields{"host": vaultHelper.HostName, "port": vaultHelper.Port}).Error(err)
+	}
+
+	log.WithFields(log.Fields{
+		"host": vaultHelper.HostName,
+	}).Debugln("Starting generate-root status")
+
+	// check init status
+	sealed, init := vaultHelper.GetStatus(client)
+
+	if init == true && sealed == false {
+		result, _ := client.Sys().Leader()
+		// if we are the leader start the generate-root
+		if result.IsSelf == true {
+			err := client.Sys().GenerateRootCancel()
+
+			if err != nil {
+				log.WithFields(log.Fields{
+					"host":  vaultHelper.HostName,
+					"port":  vaultHelper.Port,
+					"error": err,
+				}).Errorln("Error executing generate-root cancel")
+			}
+			log.WithFields(log.Fields{"host": vaultHelper.HostName}).Infoln("Generate root cancelled")
+		}
+	}
+}
+
+func HostGenerateRootSubmit(wg *sync.WaitGroup, vaultHelper *v.VaultHelper, vaultKeys []string) bool {
 	defer wg.Done()
 	client, err := vaultHelper.GetVaultClient()
 	if err != nil {
@@ -281,92 +333,70 @@ func HostRekeySubmit(wg *sync.WaitGroup, vaultHelper *v.VaultHelper, vaultKeys [
 
 	log.WithFields(log.Fields{
 		"host": vaultHelper.HostName,
-	}).Debugln("Starting rekey submit")
+	}).Debugln("Starting generateRoot submit")
 
 	// check init status
 	sealed, init := vaultHelper.GetStatus(client)
 
 	if init == true && sealed == false {
 		result, _ := client.Sys().Leader()
-		// if we are the leader start the rekey
+		// if we are the leader start the generateRoot
 		if result.IsSelf == true {
-			rekeyStatus, err := client.Sys().RekeyStatus()
+			generateRootStatus, err := client.Sys().GenerateRootStatus()
 			if err != nil {
 				log.WithFields(log.Fields{
 					"host":  vaultHelper.HostName,
 					"port":  vaultHelper.Port,
 					"error": err,
-				}).Errorln("Error getting rekey status")
+				}).Errorln("Error getting generate-root status")
 
 				return false
 			}
 
-			if rekeyStatus.Started {
+			if generateRootStatus.Started {
 				for _, vaultKey := range vaultKeys {
-					rekeyUpdate, err := client.Sys().RekeyUpdate(vaultKey, rekeyStatus.Nonce)
+					generateRootUpdate, err := client.Sys().GenerateRootUpdate(vaultKey, generateRootStatus.Nonce)
 					if err != nil {
 						log.WithFields(log.Fields{
 							"host":  vaultHelper.HostName,
 							"port":  vaultHelper.Port,
 							"error": err,
-						}).Errorln("Error updating rekey")
+						}).Errorln("Error updating generate-root")
 
 						continue
 					}
 
-					if rekeyUpdate.Complete {
-
-						var outputKeys []string
-						var outputPgps []string
+					if generateRootUpdate.Complete {
 
 						log.WithFields(log.Fields{
 							"host": vaultHelper.HostName,
-						}).Info("Rekey Complete")
+						}).Info("GenerateRoot Complete")
 
-						for _, key := range rekeyUpdate.KeysB64 {
-							outputKeys = append(outputKeys, key)
-						}
-
-						for _, pgp := range rekeyUpdate.PGPFingerprints {
-							outputPgps = append(outputPgps, pgp)
-						}
-
-						for _, outputPgp := range outputPgps {
-							log.WithFields(log.Fields{
-								"PGP Fingerprint": outputPgp,
-							}).Infoln("New Key Generated")
-						}
-
-						for _, outputKey := range outputKeys {
-							log.WithFields(log.Fields{
-								"Key": outputKey,
-							}).Infoln("New Key Generated")
-						}
+						log.WithFields(log.Fields{"EncodedRootToken": generateRootUpdate.EncodedRootToken}).Infoln("Encoded Root Token Generated")
+						log.WithFields(log.Fields{"EncodedToken": generateRootUpdate.EncodedToken}).Infoln("Encoded Token Generated")
 
 						break
 					} else {
-						newRekeyStatus, err := client.Sys().RekeyStatus()
+						newGenerateRootStatus, err := client.Sys().GenerateRootStatus()
 						if err != nil {
 							log.WithFields(log.Fields{
 								"host":  vaultHelper.HostName,
 								"port":  vaultHelper.Port,
 								"error": err,
-							}).Errorln("Error getting rekey status")
+							}).Errorln("Error getting generate-root status")
 						}
 						log.WithFields(log.Fields{
-							"host":      vaultHelper.HostName,
-							"shares":    newRekeyStatus.N,
-							"threshold": newRekeyStatus.T,
-							"nonce":     newRekeyStatus.Nonce,
-							"progress":  newRekeyStatus.Progress,
-							"required":  newRekeyStatus.Required,
+							"host":     vaultHelper.HostName,
+							"nonce":    newGenerateRootStatus.Nonce,
+							"progress": newGenerateRootStatus.Progress,
+							"required": newGenerateRootStatus.Required,
 						}).Infoln("Key submitted")
 					}
 				}
 			} else {
 				log.WithFields(log.Fields{
 					"host": vaultHelper.HostName,
-				}).Infoln("Rekey not started")
+				}).Infoln("generate-root not started")
 			}
 		}
 	}
@@ -374,12 +404,12 @@ func HostRekeySubmit(wg *sync.WaitGroup, vaultHelper *v.VaultHelper, vaultKeys [
 }
 
 func init() {
-	RootCmd.AddCommand(rekeyCmd)
-	rekeyCmd.AddCommand(initCmd)
-	rekeyCmd.AddCommand(submitCmd)
-	rekeyCmd.AddCommand(rekeyStatusCmd)
+	RootCmd.AddCommand(generateRootCmd)
+	generateRootCmd.AddCommand(generateRootInitCmd)
+	generateRootCmd.AddCommand(generateRootSubmitCmd)
+	generateRootCmd.AddCommand(generateRootStatusCmd)
+	generateRootCmd.AddCommand(generateRootCancelCmd)
 
-	initCmd.Flags().IntVarP(&shares, "shares", "s", 0, "The number of secret shares to init the rekey with")
-	initCmd.Flags().IntVarP(&threshold, "threshold", "t", 0, "The secret threshold to init the rekey with")
+	initCmd.Flags().StringVarP(&pgpkeypath, "pgpkey", "p", "", "path to the pgp key to encrypt the token with")
 
 }
