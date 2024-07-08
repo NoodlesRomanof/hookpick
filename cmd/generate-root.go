@@ -21,8 +21,13 @@
 package cmd
 
 import (
+	"bytes"
+	"fmt"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"golang.org/x/crypto/openpgp"
+	"io"
+	"os"
 
 	v "github.com/jaxxstorm/hookpick/vault"
 
@@ -34,6 +39,7 @@ import (
 )
 
 var pgpkeypath string
+var pgpkey string
 var otp string
 
 // generateRootCmd represents the generate-root command
@@ -51,8 +57,11 @@ var generateRootInitCmd = &cobra.Command{
 and returns the client nonce needed for other generate-root operators`,
 	Run: func(cmd *cobra.Command, args []string) {
 
-		if pgpkeypath == "" {
-			log.Info("No PGP key provided")
+		if pgpkeypath != "" {
+			log.Info("PGP key provided")
+
+		} else {
+
 		}
 
 		if otp == "" {
@@ -205,6 +214,25 @@ func ProcessGenerateRootSubmit(wg *sync.WaitGroup,
 	}
 }
 
+func tryLoadKey(pgpkeyfilepath string) (keyout string, err error) {
+	keyfile, err := os.Open(pgpkeyfilepath)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	_, err = openpgp.ReadArmoredKeyRing(keyfile)
+	if err != nil {
+		return
+	}
+
+	var buf bytes.Buffer
+	io.Copy(&buf, keyfile)
+	keyout = buf.String()
+
+	return keyout, nil
+}
+
 func HostGenerateRootInit(wg *sync.WaitGroup, vaultHelper *v.VaultHelper) {
 	defer wg.Done()
 	client, err := vaultHelper.GetVaultClient()
@@ -228,7 +256,12 @@ func HostGenerateRootInit(wg *sync.WaitGroup, vaultHelper *v.VaultHelper) {
 		result, _ := client.Sys().Leader()
 		// if we are the leader start the generate-root
 		if result.IsSelf == true {
-			generateRootResult, err := client.Sys().GenerateRootInit("", pgpkeypath)
+			//load the key
+			pgpkey, err = tryLoadKey(pgpkeypath)
+			if err != nil {
+				log.Errorln("generate-root key loading error ", err)
+			}
+			generateRootResult, err := client.Sys().GenerateRootInit("", pgpkey)
 			if err != nil {
 				log.Errorln("generate-root init error ", err)
 			}
