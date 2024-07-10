@@ -141,7 +141,7 @@ func ProcessRekey(wg *sync.WaitGroup,
 				"host": host.Name,
 			}).Debugln("Starting to process rekey")
 			vaultHelper := vhGetter(host.Name, caPath, protocol, host.Port, v.Status)
-			go HostGenerateRootInit(&hwg, vaultHelper)
+			go HostRekeyInit(&hwg, vaultHelper)
 		}
 		hwg.Wait()
 	}
